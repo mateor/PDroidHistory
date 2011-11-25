@@ -365,7 +365,7 @@ public final class PrivacyLocationManager extends LocationManager {
                             } catch (NumberFormatException e) {
                                 Log.e(TAG, "requestLocationUpdates: invalid coordinates");
                                 output = true;
-                            }
+                            } // TODO: INSERT A SPACE BEFORE LON
                             pSetMan.notification(packageName, uid, PrivacySettings.CUSTOM, PrivacySettings.DATA_LOCATION_GPS, 
                                     "Lat: " + pSet.getLocationGpsLat() + "Lon: " + pSet.getLocationGpsLon(), pSet);
                             break;

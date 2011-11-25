@@ -277,7 +277,7 @@ public final class PrivacySettings implements Parcelable {
     public void setLocationGpsSetting(byte locationGpsSetting) {
         this.locationGpsSetting = locationGpsSetting;
     }
-
+    // TODO: FIX RANDOM LAT AND LON
     public String getLocationGpsLat() {
         if (locationGpsSetting == EMPTY) return "";
         if (locationGpsSetting == RANDOM) return getRandomLat();
