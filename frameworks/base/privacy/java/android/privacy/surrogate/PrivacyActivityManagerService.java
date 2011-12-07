@@ -224,6 +224,17 @@ public final class PrivacyActivityManagerService {
             }
             
 //            Log.d(TAG, "broadcasting intent " + action + " - " + packageName + " (" + uid + ") output: " + output);
+        } else if (action.equals(Intent.ACTION_BOOT_COMPLETED)) {
+            pSet = pSetMan.getSettings(packageName, uid);
+            
+            if (pSet != null && pSet.getIntentBootCompletedSetting() != PrivacySettings.REAL) {
+                // no notification since all applications will receive this -> spam
+                intent.setAction("empty");
+//                pSetMan.notification(packageName, uid, PrivacySettings.EMPTY, PrivacySettings.DATA_INTENT_BOOT_COMPLETED, null, pSet);
+            } else {
+                intent.setAction(Intent.ACTION_BOOT_COMPLETED);
+//                pSetMan.notification(packageName, uid, PrivacySettings.REAL, PrivacySettings.DATA_INTENT_BOOT_COMPLETED, null, pSet);
+            }
         }
     }
     

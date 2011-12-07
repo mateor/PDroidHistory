@@ -25,58 +25,74 @@ public class PrivacyPersistenceAdapter {
     private static final String TAG = "PrivacyPersistenceAdapter";
     
     private static final int RETRY_QUERY_COUNT = 5;
+
+    private static final String DATABASE_NAME = "/data/system/privacy.db";
+    
+    private static final int DATABASE_VERSION = 2;
     
     /**
      * Number of threads currently reading the database
      */
-    private static Integer readingThreads;
-
-    private static final String DATABASE_NAME = "/data/system/privacy.db";
+    private static Integer readingThreads = 0;
     
     /**
      * Used to save settings for access from core libraries
      */
     public static final String SETTINGS_DIRECTORY = "/data/system/privacy";
 
-    private static final String DATABASE_TABLE = "settings";
+    private static final String TABLE_SETTINGS = "settings";
+    
+    private static final String TABLE_VERSION = "version";
+    
+    private static final String COLUMN_VERSION_NAME = "version";
+    
+    private static final int COLUMN_VERSION_INDEX = 1;
+    
+    private static final int ROW_ID_VERSION = 1;
+    
+    private static final String CREATE_TABLE_SETTINGS = 
+        "CREATE TABLE IF NOT EXISTS " + TABLE_SETTINGS + " ( " + 
+        " _id INTEGER PRIMARY KEY AUTOINCREMENT, " + 
+        " packageName TEXT, " + 
+        " uid INTEGER, " + 
+        " deviceIdSetting INTEGER, " + 
+        " deviceId TEXT, " + 
+        " line1NumberSetting INTEGER, " + 
+        " line1Number TEXT, " + 
+        " locationGpsSetting INTEGER, " + 
+        " locationGpsLat TEXT, " + 
+        " locationGpsLon TEXT, " + 
+        " locationNetworkSetting INTEGER, " + 
+        " locationNetworkLat TEXT, " + 
+        " locationNetworkLon TEXT, " + 
+        " networkInfoSetting INTEGER, " + 
+        " simInfoSetting INTEGER, " + 
+        " simSerialNumberSetting INTEGER, " + 
+        " simSerialNumber TEXT, " + 
+        " subscriberIdSetting INTEGER, " + 
+        " subscriberId TEXT, " + 
+        " accountsSetting INTEGER, " + 
+        " accountsAuthTokensSetting INTEGER, " + 
+        " outgoingCallsSetting INTEGER, " + 
+        " incomingCallsSetting INTEGER, " + 
+        " contactsSetting INTEGER, " + 
+        " calendarSetting INTEGER, " + 
+        " mmsSetting INTEGER, " + 
+        " smsSetting INTEGER, " + 
+        " callLogSetting INTEGER, " + 
+        " bookmarksSetting INTEGER, " + 
+        " systemLogsSetting INTEGER, " + 
+        " externalStorageSetting INTEGER, " + 
+        " cameraSetting INTEGER, " + 
+        " recordAudioSetting INTEGER, " + 
+        " notificationSetting INTEGER, " + 
+        " intentBootCompletedSetting INTEGER" + 
+        ");";
+    
+    private static final String CREATE_TABLE_VERSION = 
+        "CREATE TABLE IF NOT EXISTS " + TABLE_VERSION + " ( _id INTEGER PRIMARY KEY, version INTEGER );";
 
-    private static final String DATABASE_CREATE = 
-            "CREATE TABLE IF NOT EXISTS " + DATABASE_TABLE + " ( " + 
-            " _id INTEGER PRIMARY KEY AUTOINCREMENT, " + 
-            " packageName TEXT, " + 
-            " uid INTEGER, " + 
-            " deviceIdSetting INTEGER, " + 
-            " deviceId TEXT, " + 
-            " line1NumberSetting INTEGER, " + 
-            " line1Number TEXT, " + 
-            " locationGpsSetting INTEGER, " + 
-            " locationGpsLat TEXT, " + 
-            " locationGpsLon TEXT, " + 
-            " locationNetworkSetting INTEGER, " + 
-            " locationNetworkLat TEXT, " + 
-            " locationNetworkLon TEXT, " + 
-            " networkInfoSetting INTEGER, " + 
-            " simInfoSetting INTEGER, " + 
-            " simSerialNumberSetting INTEGER, " + 
-            " simSerialNumber TEXT, " + 
-            " subscriberIdSetting INTEGER, " + 
-            " subscriberId TEXT, " + 
-            " accountsSetting INTEGER, " + 
-            " accountsAuthTokensSetting INTEGER, " + 
-            " outgoingCallsSetting INTEGER, " + 
-            " incomingCallsSetting INTEGER, " + 
-            " contactsSetting INTEGER, " + 
-            " calendarSetting INTEGER, " + 
-            " mmsSetting INTEGER, " + 
-            " smsSetting INTEGER, " + 
-            " callLogSetting INTEGER, " + 
-            " bookmarksSetting INTEGER, " + 
-            " systemLogsSetting INTEGER, " + 
-            " externalStorageSetting INTEGER, " + 
-            " cameraSetting INTEGER, " + 
-            " recordAudioSetting INTEGER, " + 
-            " notificationSetting INTEGER" + 
-            ");";
+    private static final String DATABASE_CREATE = CREATE_TABLE_SETTINGS + " " + CREATE_TABLE_VERSION;
     
     private static final String[] DATABASE_FIELDS = new String[] { "_id", "packageName", "uid", 
         "deviceIdSetting", "deviceId", "line1NumberSetting", "line1Number", "locationGpsSetting", 
@@ -84,8 +100,9 @@ public class PrivacyPersistenceAdapter {
         "locationNetworkLon", "networkInfoSetting", "simInfoSetting", "simSerialNumberSetting", 
         "simSerialNumber", "subscriberIdSetting", "subscriberId", "accountsSetting", "accountsAuthTokensSetting", 
         "outgoingCallsSetting", "incomingCallsSetting", "contactsSetting", "calendarSetting", 
-        "mmsSetting", "smsSetting", "callLogSetting", "bookmarksSetting", 
-        "systemLogsSetting", "externalStorageSetting", "cameraSetting", "recordAudioSetting", "notificationSetting" };
+        "mmsSetting", "smsSetting", "callLogSetting", "bookmarksSetting", "systemLogsSetting", 
+        "externalStorageSetting", "cameraSetting", "recordAudioSetting", "notificationSetting", 
+        "intentBootCompletedSetting" };
 
     private SQLiteDatabase db;
     
@@ -101,11 +118,66 @@ public class PrivacyPersistenceAdapter {
         if (canWrite) {
             if (!new File(DATABASE_NAME).exists()) createDatabase();
             if (!new File(SETTINGS_DIRECTORY).exists()) createSettingsDir();
+            // upgrade if needed
+            int currentVersion = getVersion();
+            Log.d(TAG, "PrivacyPersistenceAdapter - current DB version: " + currentVersion);
+            if (currentVersion < DATABASE_VERSION) upgradeDatabase(currentVersion);
         }
-        readingThreads = 0;
     }
 
-    public PrivacySettings getSettings(String packageName, int uid) {        
+    private synchronized void upgradeDatabase(int currentVersion) {
+        Log.d(TAG, "upgradeDatabase - upgrading DB");
+        switch (currentVersion) {
+            case 1:
+                SQLiteDatabase db = getWritableDatabase();
+                try {
+                    if (db != null && db.isOpen()) {
+                        db.execSQL("ALTER TABLE " + TABLE_SETTINGS + " ADD COLUMN intentBootCompletedSetting INTEGER;");
+                        db.execSQL(CREATE_TABLE_VERSION);
+                        db.execSQL("INSERT OR REPLACE INTO " + TABLE_VERSION + " (_id, " + COLUMN_VERSION_NAME + ") " +
+                        		"VALUES (" + ROW_ID_VERSION + ", " + DATABASE_VERSION + ")");
+                        db.close();
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "upgradeDatabase - could not upgrade DB", e);
+                }
+                break;
+            case 2:
+                // most current version, do nothing
+                Log.w(TAG, "upgradeDatabase - trying to upgrade most current DB version");
+                break;
+        }
+    }
+    
+    private int getVersion() {
+        readingThreads++;
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c;
+        int output = 1;
+        
+        try {
+            c = query(db, TABLE_VERSION, new String[] { "version" }, "_id=?", 
+                    new String[] { ROW_ID_VERSION + "" }, null, null, null, null);
+            if (c != null && c.moveToFirst()) {
+                output = c.getInt(COLUMN_VERSION_INDEX);
+                c.close();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "getVersion - the version entry probably does not exist -> version 1 assumed", e);
+        }
+        
+        synchronized (readingThreads) {
+            readingThreads--;
+            // only close DB if no other threads are reading
+            if (readingThreads == 0 && db != null && db.isOpen()) {
+                db.close();
+            }
+        }
+        
+        return output;
+    }
+
+    public PrivacySettings getSettings(String packageName, int uid) {
         PrivacySettings s = null;
         
         if (packageName == null) {
@@ -131,7 +203,7 @@ public class PrivacyPersistenceAdapter {
         try {
             // try to get settings based on package name only first; some system applications
             // (e.g., HTC Settings) run with a different UID than reported by package manager
-            c = query(db, DATABASE_TABLE, DATABASE_FIELDS, "packageName=?", new String[] { packageName }, null, null, null);
+            c = query(db, TABLE_SETTINGS, DATABASE_FIELDS, "packageName=?", new String[] { packageName }, null, null, null, null);
 
             if (c != null) {
                 if (c.getCount() > 1) {
@@ -141,8 +213,8 @@ public class PrivacyPersistenceAdapter {
 //                            + "; trying with UID: " + uid);
                     
                     c.close();
-                    c = query(db, DATABASE_TABLE, DATABASE_FIELDS, 
-                            "packageName=? AND uid=?", new String[] { packageName, uid + "" }, null, null, null);
+                    c = query(db, TABLE_SETTINGS, DATABASE_FIELDS, 
+                            "packageName=? AND uid=?", new String[] { packageName, uid + "" }, null, null, null, null);
                 }
                 if (c.getCount() == 1 && c.moveToFirst()) {
                     s = new PrivacySettings(c.getInt(0), c.getString(1), c.getInt(2), (byte)c.getShort(3), c.getString(4), 
@@ -151,7 +223,7 @@ public class PrivacyPersistenceAdapter {
                             c.getString(16), (byte)c.getShort(17), c.getString(18), (byte)c.getShort(19), (byte)c.getShort(20), 
                             (byte)c.getShort(21), (byte)c.getShort(22), (byte)c.getShort(23), (byte)c.getShort(24), (byte)c.getShort(25), 
                             (byte)c.getShort(26), (byte)c.getShort(27), (byte)c.getShort(28), (byte)c.getShort(29), (byte)c.getShort(30), 
-                            (byte)c.getShort(31), (byte)c.getShort(32), (byte)c.getShort(33));
+                            (byte)c.getShort(31), (byte)c.getShort(32), (byte)c.getShort(33), (byte)c.getShort(34));
 //                    Log.d(TAG, "getSettings - found settings entry for package: " + packageName + " UID: " + uid);
                 } else if (c.getCount() > 1) {
                     // multiple settings entries have same package name AND UID; this should NEVER happen
@@ -162,7 +234,7 @@ public class PrivacyPersistenceAdapter {
 //                Log.d(TAG, "getSettings - no settings found for package: " + packageName + " UID: " + uid);
             }
         } catch (Exception e) {
-            Log.e(TAG, "getSettings - failed to get settings for package: " + packageName + " UID: " + uid);
+            Log.e(TAG, "getSettings - failed to get settings for package: " + packageName + " UID: " + uid, e);
             e.printStackTrace();
         } finally {
             if (c != null) c.close();
@@ -236,6 +308,7 @@ public class PrivacyPersistenceAdapter {
         values.put("bookmarksSetting", s.getBookmarksSetting());
         values.put("systemLogsSetting", s.getSystemLogsSetting());
         values.put("notificationSetting", s.getNotificationSetting());
+        values.put("intentBootCompletedSetting", s.getIntentBootCompletedSetting());
 //        values.put("externalStorageSetting", s.getExternalStorageSetting());
 //        values.put("cameraSetting", s.getCameraSetting());
 //        values.put("recordAudioSetting", s.getRecordAudioSetting());
@@ -249,23 +322,23 @@ public class PrivacyPersistenceAdapter {
             if (s.get_id() != null) { // entry exists -> update
 
 //                Log.d(TAG, "saveSettings - updating existing entry");
-                db.update(DATABASE_TABLE, values, "_id=?", new String[] { s.get_id().toString() });
+                db.update(TABLE_SETTINGS, values, "_id=?", new String[] { s.get_id().toString() });
 
             } else { // new entry -> insert if no duplicates exist
 
 //                Log.d(TAG, "saveSettings - new entry; verifying if duplicates exist");
-                c = db.query(DATABASE_TABLE, new String[] { "_id" }, "packageName=? AND uid=?", 
+                c = db.query(TABLE_SETTINGS, new String[] { "_id" }, "packageName=? AND uid=?", 
                         new String[] { s.getPackageName(), s.getUid() + "" }, null, null, null);
                 
                 if (c != null) {
                     if (c.getCount() == 1) { // exactly one entry
                         // exists -> update
 //                        Log.d(TAG, "saveSettings - updating existing entry");
-                        db.update(DATABASE_TABLE, values, "packageName=? AND uid=?", 
+                        db.update(TABLE_SETTINGS, values, "packageName=? AND uid=?", 
                                 new String[] { s.getPackageName(), s.getUid() + "" });
                     } else if (c.getCount() == 0) { // no entries -> insert
 //                        Log.d(TAG, "saveSettings - inserting new entry");
-                        db.insert(DATABASE_TABLE, null, values);
+                        db.insert(TABLE_SETTINGS, null, values);
                     } else { // something went totally wrong and there are multiple entries for same identifier
                         result = false;
                         Log.e(TAG, "saveSettings - duplicate entries in the privacy.db");
@@ -330,7 +403,7 @@ public class PrivacyPersistenceAdapter {
         try {
 //            Log.d(TAG, "deleteSettings - deleting database entry for " + packageName + " (" + uid + ")");
             int output = 
-                db.delete(DATABASE_TABLE, "packageName=? AND uid=?", new String[] { packageName, uid + "" });
+                db.delete(TABLE_SETTINGS, "packageName=? AND uid=?", new String[] { packageName, uid + "" });
             if (output == 0) {
                 Log.e(TAG, "deleteSettings - database entry for " + packageName + " (" + uid + ") not found");
                 return false;
@@ -360,14 +433,14 @@ public class PrivacyPersistenceAdapter {
     }
     
     private Cursor query(SQLiteDatabase db, String table, String[] columns, String selection, 
-            String[] selectionArgs, String groupBy, String having, String orderBy) throws Exception {
+            String[] selectionArgs, String groupBy, String having, String orderBy, String limit) throws Exception {
         Cursor c = null;
         // make sure getting settings does not fail because of IllegalStateException (db already closed)
         boolean success = false;
         for (int i = 0; success == false && i < RETRY_QUERY_COUNT; i++) {
             try {
                 if (c != null) c.close();
-                c = db.query(table, columns, selection, selectionArgs, groupBy, having, orderBy);
+                c = db.query(table, columns, selection, selectionArgs, groupBy, having, orderBy, limit);
                 success = true;
             } catch (IllegalStateException e) {
                 success = false;
@@ -418,7 +491,7 @@ public class PrivacyPersistenceAdapter {
         SQLiteDatabase db = getReadableDatabase();
         Cursor c = null;
         try {
-            c = query(db, DATABASE_TABLE, new String[] {"packageName", "uid"}, null, null, null, null, null);
+            c = query(db, TABLE_SETTINGS, new String[] {"packageName", "uid"}, null, null, null, null, null, null);
             while (c.moveToNext()) {
                 String packageName = c.getString(0);
                 int uid = c.getInt(1);
