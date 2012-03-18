@@ -144,7 +144,7 @@ public class PrivacyPersistenceAdapter {
     }
 
     private synchronized void upgradeDatabase(int currentVersion) {
-        Log.d(TAG, "upgradeDatabase - upgrading DB from version " + currentVersion + " to " + DATABASE_VERSION);
+        Log.i(TAG, "upgradeDatabase - upgrading DB from version " + currentVersion + " to " + DATABASE_VERSION);
         
         // backup current database file
         File dbFile = new File(DATABASE_FILE);
@@ -171,7 +171,6 @@ public class PrivacyPersistenceAdapter {
             case 2:
                 try {
                     if (db != null && db.isOpen()) {
-//                        db.execSQL("ALTER TABLE " + TABLE_SETTINGS + " ADD COLUMN intentBootCompletedSetting INTEGER;");
                         db.execSQL("DROP TABLE IF EXISTS " + TABLE_VERSION + ";");
                         db.execSQL(CREATE_TABLE_ALLOWED_CONTACTS); 
                         db.execSQL(CREATE_TABLE_MAP);
@@ -196,16 +195,19 @@ public class PrivacyPersistenceAdapter {
                             }
                         }
                         
-                        purgeSettings();
-                        
                         db.setTransactionSuccessful();
                     }
                 } catch (Exception e) {
-                    if (db != null && db.isOpen()) db.close();
+                    if (db != null && db.isOpen()) {
+                        db.endTransaction();
+                        db.close();
+                    }
                     Log.w(TAG, "upgradeDatabase - could not upgrade DB; will restore backup", e);
                     FileUtils.copyFile(dbBackupFile, dbFile);
                     dbBackupFile.delete();
                 }
+                
+                
                 break;
                 
             case 3:
@@ -217,16 +219,47 @@ public class PrivacyPersistenceAdapter {
         if (db != null && db.isOpen()) {
             db.endTransaction();
             db.close();
+        } else {
+            Log.e(TAG, "upgradeDatabase - database is null or closed; cant call endTransaction()");
         }
+        
+        purgeSettings();
     }
     
     private int getDbVersion() {
-        String version = getValue(SETTING_DB_VERSION);
-        if (version == null) return 1;
+        int version = -1;
+        // check if the table "map" exists; if it doesn't -> return version 1
+        readingThreads++;
+        SQLiteDatabase db = getReadableDatabase();
+        try {
+            Cursor c = rawQuery(db, "SELECT name FROM sqlite_master WHERE type='table' AND name='" + TABLE_MAP + "';");
+            if (c != null) {
+                if (c.getCount() == 0) {
+                    // table map does not exist
+                    version = 1;
+                }
+                c.close();
+                synchronized (readingThreads) {
+                    readingThreads--;
+                    // only close DB if no other threads are reading
+                    if (readingThreads == 0 && db != null && db.isOpen()) {
+                        db.close();
+                    }
+                }
+            } else {
+                Log.e(TAG, "getDbVersion - failed to check if table map exists (cursor is null)");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "getDbVersion - failed to check if table map exists (exception)");
+        }
+        if (version == 1) return version;
+        
+        String versionString = getValue(SETTING_DB_VERSION);
+        if (versionString == null) return 1;
         
         int versionNum;
         try {
-            versionNum = Integer.parseInt(version);
+            versionNum = Integer.parseInt(versionString);
         } catch (Exception e) {
             Log.e(TAG, "getDbVersion - failed to parse database version; returning 1");
             return 1;
@@ -314,7 +347,7 @@ public class PrivacyPersistenceAdapter {
 //                Log.d(TAG, "getSettings - looking for allowed contacts for " + s.get_id());
 //                c = query(db, TABLE_ALLOWED_CONTACTS, null, 
 //                        "settings_id=?", new String[] { Integer.toString(s.get_id()) }, null, null, null, null);
-                c = db.rawQuery("SELECT * FROM allowed_contacts WHERE settings_id=" + Integer.toString(s.get_id()) + ";", null);
+                c = rawQuery(db, "SELECT * FROM allowed_contacts WHERE settings_id=" + Integer.toString(s.get_id()) + ";");
                 
                 if (c != null && c.getCount() > 0) {
 //                    Log.d(TAG, "getSettings - found allowed contacts");
@@ -613,6 +646,31 @@ public class PrivacyPersistenceAdapter {
         return c;
     }
     
+    private Cursor rawQuery(SQLiteDatabase db, String sql) throws Exception {
+        Cursor c = null;
+        // make sure getting settings does not fail because of IllegalStateException (db already closed)
+        boolean success = false;
+        for (int i = 0; success == false && i < RETRY_QUERY_COUNT; i++) {
+            try {
+                if (c != null) c.close();
+                c = db.rawQuery(sql, null);
+                success = true;
+            } catch (IllegalStateException e) {
+                success = false;
+                if (db != null && db.isOpen()) db.close();
+                db = getReadableDatabase();
+            }
+        }
+        if (success == false) throw new Exception("query - failed to execute query on the DB");
+        return c;
+    }
+    
+    /**
+     * Removes obsolete entries from the DB and file system. Should not be used in methods, which rely on the DB
+     * being open after this method has finished. It will close the DB if no other threads has increased
+     * the readingThread count.
+     * @return true if purge was successful, false otherwise.
+     */
     public boolean purgeSettings() {
         boolean result = true;
 //        Log.d(TAG, "purgeSettings - begin purging settings");
